@@ -2,7 +2,7 @@ import { writable } from 'svelte/store'
 import type { ImageType } from '$lib/utils/types'
 
 const galleryInterface = {
-	images: [] as any[],
+	images: [] as ImageType[],
 	selectedFilteredImages: [] as any[],
 	tags: [] as string[],
 	selectedTag: '' as string,
@@ -12,7 +12,10 @@ const galleryInterface = {
 	modal: false as boolean,
 	modalQuestion: '' as string,
 	zoomLevel: 100 as number,
-	activeFilter: ''
+	activeFilter: '',
+	galleryView: false as boolean,
+	viewedImages: [] as ImageType[],
+	activeTabIndex: null as unknown as number
 }
 
 export const galleryStore = writable(galleryInterface)

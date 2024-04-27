@@ -1,106 +1,181 @@
 <script lang="ts">
-	import { makeid, openDirectory } from '$lib/utils/tools'
 	import Gallery from '$lib/components/Gallery.svelte'
 	import Filter from '$lib/components/Filter.svelte'
 	import Actions from '$lib/components/Actions.svelte'
-	import { galleryStore } from '$lib/store'
-	import { Slider } from '$lib/components/ui/slider'
-	import type { ImageType } from '$lib/utils/types'
 	import TagsList from '$lib/components/TagsList.svelte'
-	import { toast } from 'svelte-sonner'
+	import Header from '$lib/components/gallery/Header.svelte'
+	import Footer from '$lib/components/Footer.svelte'
+	import ImageEditor from '$lib/components/gallery/ImageEditor.svelte'
 
-	let images: ImageType[] = []
-	let zoomLevel: number[] = [$galleryStore.zoomLevel]
+	import { open } from '@tauri-apps/api/dialog'
+	import { invoke, convertFileSrc } from '@tauri-apps/api/tauri'
+	import { readDir } from '@tauri-apps/api/fs'
+	import { listen } from '@tauri-apps/api/event'
+
+	import { makeid } from '$lib/utils/tools'
+	import { galleryStore } from '$lib/store'
+	import type { ImageType } from '$lib/utils/types'
+	import { askDeleteImage, askDeleteTag, filterImageWithTag } from '$lib/actions'
+
+	let imageDropping = false
+
+	listen('tauri://file-drop-hover', (e) => {
+		imageDropping = true
+	})
+
+	listen('tauri://file-drop-cancelled', (e) => {
+		imageDropping = false
+	})
+
+	listen('tauri://file-drop', async (e) => {
+		imageDropping = false
+
+		const payload = e.payload as string[]
+
+		const dirs = []
+		const images = []
+
+		for (const file of payload) {
+			const metadata: {
+				file_type: string
+				file_size: number
+				created_time: string
+				modified_time: string
+				accessed_time: string
+			} = await invoke('get_file_metadata', { filePath: file })
+
+			if (metadata.file_type === 'directory') {
+				dirs.push(file)
+			} else {
+				images.push(file)
+			}
+		}
+
+		dirs.length && (await loadDirs(dirs)).forEach((path) => images.push(path))
+
+		$galleryStore.images = await loadImages(images)
+	})
+
+	const loadDirs = async (paths: string[]): Promise<string[]> => {
+		return (
+			await Promise.allSettled(
+				paths.map(async (folder) => {
+					return (await readDir(folder))
+						.map((file) => file.path)
+						.filter(
+							(file) =>
+								file.endsWith('.png') ||
+								file.endsWith('.jpeg') ||
+								file.endsWith('.jpg') ||
+								file.endsWith('.gif') ||
+								file.endsWith('.webp')
+						)
+				})
+			)
+		)
+			.map((item) => {
+				if (item.status === 'rejected') {
+					console.error(`ERROR: while reading folder: ${item.reason}`)
+				}
+				return item
+			})
+			.filter((item): item is PromiseFulfilledResult<string[]> => item.status === 'fulfilled')
+			.map((item) => (item.status === 'fulfilled' ? item.value : null))
+			.filter((item): item is string[] => item !== null)
+			.flat()
+	}
+
+	const loadImages = async (paths: string[]): Promise<ImageType[]> => {
+		const output: PromiseSettledResult<ImageType>[] = await Promise.allSettled(
+			paths.map(async (file) => {
+				const metadata: {
+					file_type: string
+					file_size: number
+					created_time: string
+					modified_time: string
+					accessed_time: string
+				} = await invoke('get_file_metadata', { filePath: file })
+
+				return {
+					id: makeid(5),
+					src: convertFileSrc(file),
+					name: file,
+					size: metadata.file_size,
+					lastModified: metadata.modified_time,
+					type: metadata.file_type,
+					tag: '' as string
+				} as ImageType
+			})
+		)
+
+		return output
+			.map((item) => {
+				if (item.status === 'rejected') {
+					console.error(`ERROR: while reading folder: ${item.reason}`)
+				}
+				return item
+			})
+			.filter((item): item is PromiseFulfilledResult<ImageType> => item.status === 'fulfilled')
+			.map((item) => (item.status === 'fulfilled' ? item.value : null))
+			.filter((item): item is ImageType => item !== null && item.type !== 'directory')
+	}
 
 	const uploadFolder = async () => {
-		images = []
-		$galleryStore.images = []
-		const filesDir: File[] = (await openDirectory()) as File[]
+		let selected = await open({
+			multiple: true,
+			directory: true
+		})
 
-		$galleryStore.fileInfos = filesDir
-
-		if (filesDir && filesDir.length) {
-			filesDir.forEach((file) => {
-				if (file.type && !file.type.startsWith('image/')) {
-					console.log('File is not an image.', file.type, file)
-					toast.error('One of file is not an image')
-					return
-				}
-				var reader = new FileReader()
-
-				reader.addEventListener(
-					'load',
-					function () {
-						let { name, size, lastModified, type } = file
-						images.push({
-							id: makeid(5),
-							src: reader.result,
-							tag: '',
-							name,
-							size,
-							lastModified,
-							type
-						})
-						$galleryStore.images = images
-					},
-					false
-				)
-
-				if (file) {
-					reader.readAsDataURL(file)
-				}
-			})
-		}
-	}
-
-	const deleteImage = () => {
-		if ($galleryStore.selectedImage) {
-			$galleryStore.questionModalProp = 'deleteImage'
-			$galleryStore.modalQuestion = 'Are you sure want to delete that image?'
-			$galleryStore.modal = true
-			return
-		}
-	}
-
-	const deleteTag = () => {
-		if ($galleryStore.selectedTag) {
-			$galleryStore.questionModalProp = 'deleteTag'
-			$galleryStore.modalQuestion = 'Are you sure want to delete that tag?'
-			$galleryStore.modal = true
+		if (Array.isArray(selected) && selected.length) {
+			const values = await loadDirs(selected)
+			$galleryStore.images = await loadImages(values)
 		}
 	}
 
 	$: if ($galleryStore.selectedTag) {
-		if ($galleryStore.images.length) {
-			let filtered = $galleryStore.images.filter((image) => image.tag == $galleryStore.selectedTag)
-			$galleryStore.selectedFilteredImages = filtered
-		}
+		filterImageWithTag()
 	}
+
+	let showInfo = false
 </script>
 
 <svelte:head>
 	<title>ARK Gallery 1.0</title>
 </svelte:head>
 
-<div class="flex flex-col justify-between max-w-7xl p-5 w-full rounded-md mx-auto h-screen">
-	<div>
+<div class="flex h-screen w-full flex-col justify-start">
+	{#if imageDropping}
+		<div
+			class="absolute left-0 top-0 z-50 flex h-full w-full items-center justify-center bg-blue-300 bg-opacity-50"
+		>
+			<p class="text-2xl font-bold text-white">Drop your images here</p>
+		</div>
+	{/if}
+	<div
+		class:hidden={$galleryStore.galleryView}
+		class="mx-auto flex h-full w-full max-w-7xl flex-col justify-start p-5"
+	>
 		<Filter />
-		<Actions
-			on:upload={() => uploadFolder()}
-			on:deleteImage={() => deleteImage()}
-			on:deleteTag={() => deleteTag()}
-		/>
-		<TagsList />
-		<Gallery />
+		<div class="mt-10">
+			<Actions
+				on:upload={() => uploadFolder()}
+				on:deleteImage={() => askDeleteImage()}
+				on:deleteTag={() => askDeleteTag()}
+			/>
+		</div>
+		<div class="my-5">
+			<TagsList />
+		</div>
+		<div class="flex-1 overflow-auto p-1">
+			<Gallery />
+		</div>
+
+		<div class="flex flex-col items-end justify-center pt-4">
+			<Footer />
+		</div>
 	</div>
-	<div class="flex py-10 flex-row justify-end">
-		<Slider
-			bind:value={zoomLevel}
-			onValueChange={(e) => ($galleryStore.zoomLevel = e[0])}
-			class="w-80"
-			max={130}
-			min={80}
-			step={1}
-		/>
+	<div class:hidden={!$galleryStore.galleryView}>
+		<Header bind:showInfo />
+		<ImageEditor bind:showInfo />
 	</div>
 </div>

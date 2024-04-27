@@ -6,10 +6,10 @@
 		SelectGroup,
 		SelectItem,
 		SelectLabel,
-		SelectTrigger,
-		SelectValue
+		SelectTrigger
 	} from '$lib/components/ui/select'
-	import type { Selected } from 'bits-ui'
+	import { type Selected } from 'bits-ui'
+	import { filterImageWithTag } from '$lib/actions'
 
 	export let filter: Selected<string> = { value: '' }
 
@@ -23,6 +23,8 @@
 	let tmr: number
 
 	const updateFilter = async () => {
+		$galleryStore.selectedTag = ''
+		filterImageWithTag()
 		let _images = $galleryStore.images
 		$galleryStore.activeFilter = filter.value
 
@@ -59,22 +61,31 @@
 	$: filter, updateFilter()
 </script>
 
-<div class="flex flex-row items-center w-full rounded-full shadow-lg bg-white py-2 px-10">
-	<p>Show</p>
+<div class="flex w-full flex-row items-center rounded-full bg-white px-10 py-3 shadow-lg">
+	<p>Show:</p>
 
 	<Select bind:selected={filter}>
 		<SelectTrigger
-			class="w-32 flex border-none focus:ring-0 focus:ring-offset-0"
+			asChild
+			let:builder
+			class="flex w-32 border-none focus:ring-0 focus:ring-offset-0"
 			disabled={!$galleryStore.images.length}
 		>
-			<SelectValue class="text-base" placeholder="All photos"></SelectValue>
+			<div
+				class="w-28 cursor-pointer px-2 text-base
+				{!$galleryStore.images.length && 'pointer-events-none opacity-70'}"
+				use:builder.action
+				{...builder}
+			>
+				{filter.value != '' ? 'By ' + filter.value : 'All Photos'}
+			</div>
 		</SelectTrigger>
 		<SelectContent>
 			<SelectGroup>
 				<SelectLabel class="pl-7">All photos</SelectLabel>
 				{#each filters as filter}
 					<SelectItem class="cursor-pointer" value={filter.value} label={filter.label}
-						>by {filter.label}</SelectItem
+						>By {filter.label}</SelectItem
 					>
 				{/each}
 			</SelectGroup>
